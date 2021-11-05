@@ -12,9 +12,19 @@
          )
 
 
+
 ; Delimiter parameter to control the default converter behavior
 (define/contract default-delimiter (parameter/c string?)
   (make-parameter ","))
+
+
+; Way of mapping symbols to delimiters
+; in case we want to be more expressive about our delimiter choices(?)
+(define (sym->delim sym)
+  (case sym
+    ('comma   ",")
+    ('tab     "\t")
+    (else     ","))) ; add more as needed 
 
 
 ; Create a function that splits strings based on an initial separator
@@ -28,17 +38,17 @@
 (define/contract (struct-wrap struct-init)
   (-> struct-constructor-procedure? (-> list? struct?))
   (λ (data)
-    (define v (apply struct-init data))
-    (if (struct? v)
-        v
-        (error 'struct-wrap
-               "Invalid struct type given; struct must be transparent"))))
+    (let ([v (apply struct-init data)])
+      (if (struct? v)
+          v
+          (error 'struct-wrap
+                 "Invalid struct type given; is your struct #:transparent?")))))
 
 
 ; Create a friendly way of loading a file into a list of structs
 ; Creates a function that can read from a file into a list of data
 (define/contract (file->struct-gen struct-fun #:delimiter [sep ","] #:skip-header [skip #t])
-  (->* (procedure?) (#:delimiter string? #:skip-header boolean?) procedure?)
+  (->* (procedure?) (#:delimiter (or/c symbol? string?) #:skip-header boolean?) procedure?)
   (let ([split-and-pack (compose (struct-wrap struct-fun)
                                  (csv-split-gen sep))])
     (compose (λ (lines) (map split-and-pack lines))

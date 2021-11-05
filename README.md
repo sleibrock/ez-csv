@@ -33,3 +33,8 @@ Reading and writing CSV files made painless and easy. Drops into any kind or Rac
 ; #<NinjaWeapon "Throwing Star" "Aluminum" "black/red")
 ; ...
 ```
+
+Todo List
+
+1. Add lazy-reading method for stream/generator purposes
+2. Add ability to include headers for CSV output
