@@ -47,13 +47,12 @@
 
 ; Create a friendly way of loading a file into a list of structs
 ; Creates a function that can read from a file into a list of data
-(define/contract (file->struct-gen struct-fun #:delimiter [sep ","] #:skip-header [skip #t])
-  (->* (procedure?) (#:delimiter (or/c symbol? string?) #:skip-header boolean?) procedure?)
+(define/contract (file->struct-gen struct-fun #:delimiter [sep ","] #:skip-fn [skip identity])
+  (->* (procedure?) (#:delimiter (or/c symbol? string?) #:skip-fn procedure?) procedure?)
   (let ([split-and-pack (compose (struct-wrap struct-fun)
                                  (csv-split-gen sep))])
     (compose (λ (lines) (map split-and-pack lines))
-             (if skip cdr identity)
-             file->lines string->path)))
+             skip file->lines string->path)))
 
 
 ; This is the default converter for CSV records
