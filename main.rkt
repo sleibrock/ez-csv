@@ -88,7 +88,7 @@
   (define splitter (csv-split-gen (default-delimiter)))
   (define struct-pack (struct-wrap tester))
   (define packer (compose struct-pack splitter))
-  (define file->testers (file->struct-gen tester #:skip-header #f))
+  (define file->testers (file->struct-gen tester #:skip-fn identity))
 
   ; Test whether string splitting works or not
   (test-case "String splitting"
