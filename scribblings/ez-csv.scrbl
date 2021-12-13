@@ -30,20 +30,20 @@ The usage of @code{ez-csv} is simple now with the new macro system in place. We 
 (require ez-csv)
 
 ; create a new record
-(defrec Student ["Name" "StudentID"] [name id] ",")
+;(defrec Student ["Name" "StudentID"] [name id] ",")
 
 ; define some students
-(define my-students
-  (list
-    (Student "Frog" "12345")
-	(Student "Robo" "R-66Y")))
+;(define my-students
+;  (list
+;   (Student "Frog" "12345")
+;	(Student "Robo" "R-66Y")))
 
 ; write to a file
-(Students->csv "mykids.csv" my-students)
+;(Students->csv "mykids.csv" my-students)
 
 ; or, read a file
-(define new-students (file->Students "new-year-students.csv"))
+;(define new-students (file->Students "new-year-students.csv"))
 
 ; print them out - each student is a hash
-(for-each displayln new-students)
+;(for-each displayln new-students)
 ]
