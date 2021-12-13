@@ -17,20 +17,23 @@ Reading and writing CSV files made painless and easy. Drops into any kind or Rac
 (require ez-csv)
 
 ; Create our CSV struct
-(struct NinjaWeapon (name material color))
-
-; Create a file loading helper
-(define file->NinjaWeapons (file->struct-gen NinjaWeapon))
+(defrec NinjaWeapon
+  ["Name of Weapon" "Material" "Color"]
+  [name material color]
+  ",")
 
 ; Load in your CSV text file
-(define weapons (file->NinjaWeapons "weapon_closet.csv"))
+(define weapons-closet (file->NinjaWeapons "weapon_closet.csv"))
 
 ; Treat it like you would any regular list type
-(for-each displayln weapons)
+(for-each
+ (lambda (item)
+   (displayln (NinjaWeapon-name item)))
+ weapons-closet)
 
-; #<NinjaWeapon "Katana" "Steel" "grey/silver")
-; #<NinjaWeapon "Nunchuku" "Wood" "black")
-; #<NinjaWeapon "Throwing Star" "Aluminum" "black/red")
+; Katana
+; Nunchuku
+; Throwing Star
 ; ...
 ```
 

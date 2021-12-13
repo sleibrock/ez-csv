@@ -1,82 +1,142 @@
 #lang racket/base
 
-(require (only-in racket/contract define/contract -> ->* any/c and/c or/c parameter/c)
-         (only-in racket/string string-split string-join)
-         (only-in racket/file file->lines)
-         (only-in racket/function identity)
-         (only-in racket/struct struct->list))
+#|
+The ez-csv library
 
+ez-csv depends solely on one macro doing it's job - defrec
+defrec is a macro I designed to expand upon some of the flaws
+I felt existed within struct. I designed it as a near drop-in
+replacement for the default `struct` macro in Racket.
 
-(provide file->struct-gen
-         data->csv
-         )
+defrec will create a CSV object packer for you, and a bunch of
+bindings at macro expansion time. It is similar to struct in
+that sense, but it goes a little bit above and beyond
+and creates additional bindings like thing->csv or file->things
+on your behalf. This makes it even easier to write CSV handling
+code, so you don't have to define a reader/writer every time
+for each record type.
 
+The key difference against a struct design is the fact that
+in a regular CSV code base, keeping the headers alongside the
+data is tricky, because when using struct natively, headers
+aren't typically kept near the data, and it's kept somewhere
+else. The design with defrec is to create an immutable-hash
+that contains the headers as well as the data, so you don't
+actually lose anything, and it's easy to contain information.
+Delimiter, header, and field values are all contained
+in each Record's hash fields.
 
+Downside: I don't have a means of exporting all fields
+magically like `struct-out` would, so you must use
+`all-defined-out` when defining a Record type module.
+|#
 
-; Delimiter parameter to control the default converter behavior
-(define/contract default-delimiter (parameter/c string?)
-  (make-parameter ","))
+; Import bindings for the macro procedure
+(require (for-syntax racket/syntax racket/base racket/string)
+         (only-in racket/string string-join string-split)
+         (only-in racket/port port->lines))
 
+(provide defrec)
 
-; Way of mapping symbols to delimiters
-; in case we want to be more expressive about our delimiter choices(?)
-(define (sym->delim sym)
-  (case sym
-    ('comma   ",")
-    ('tab     "\t")
-    (else     ","))) ; add more as needed 
-
-
-; Create a function that splits strings based on an initial separator
-(define (csv-split-gen sep)
-  (-> string? (-> string? list?))
-  (λ (str)
-    (string-split str sep #:trim? #f)))
-
-
-; Create a friendly way of packing data into a given structure init
-(define/contract (struct-wrap struct-init)
-  (-> struct-constructor-procedure? (-> list? struct?))
-  (λ (data)
-    (let ([v (apply struct-init data)])
-      (if (struct? v)
-          v
-          (error 'struct-wrap
-                 "Invalid struct type given; is your struct #:transparent?")))))
-
-
-; Create a friendly way of loading a file into a list of structs
-; Creates a function that can read from a file into a list of data
-(define/contract (file->struct-gen struct-fun #:delimiter [sep ","] #:skip-fn [skip identity])
-  (->* (procedure?) (#:delimiter (or/c symbol? string?) #:skip-fn procedure?) procedure?)
-  (let ([split-and-pack (compose (struct-wrap struct-fun)
-                                 (csv-split-gen sep))])
-    (compose (λ (lines) (map split-and-pack lines))
-             skip file->lines string->path)))
-
-
-; This is the default converter for CSV records
-(define/contract (record->string rec)
-  (-> (or/c list? struct?) string?)
-  (string-join
-   (cond
-     ([struct? rec] (struct->list rec))
-     ([list?   rec] rec)
-     (else (error 'record->string "Invalid record type")))
-   (default-delimiter)))
-
-
-; Convert a data list into a CSV file
-; Must supply a converter function to convert a record type
-; to a delimited string
-(define/contract (data->csv fname data converter)
-  (-> (or/c path? string?) list? procedure? boolean?)
-  ;(error 'data->csv "Not implemented yet 🙂 -steve")
-  (call-with-output-file fname #:exists 'replace
-    (λ (out)
-      (parameterize ([current-output-port out])
-        (for-each (compose displayln converter) data)
-        (values #t)))))
+(define-syntax (defrec stx)
+  (syntax-case stx ()
+    [(_ id (col-headers ...) (fields ...) delim)
+     ; Check for free identifiers first
+     (for-each (lambda (x)
+                 (unless (identifier? x)
+                   (raise-syntax-error #f "not an identifier" stx x)))
+               (cons #'id (syntax->list #'(fields ...))))
+     (with-syntax ([pred-id         (format-id #'id "~a?" #'id)]
+                   [delim           (syntax->datum #'delim)]
+                   [headers-lst     (cons list (syntax->datum #'(col-headers ...)))]
+                   [thing-delimiter (format-id #'id "~a-delimiter" #'id)]
+                   [thing-headers   (format-id #'id "~a-headers"   #'id)]
+                   [id-update       (format-id #'id "~a-update"    #'id)]
+                   [thing=?         (format-id #'id "~a=?"         #'id)]
+                   [thing->string   (format-id #'id "~a->string"   #'id)]
+                   [file->things    (format-id #'id "file->~as"    #'id)]
+                   [things->csv     (format-id #'id "~as->csv"      #'id)]
+                   [list->thing     (format-id #'id "list->~a"     #'id)])
+       #`(begin
+           ; The main constructor method
+           (define (id fields ...)
+             (make-immutable-hash
+              `((type      . id)
+                (delimiter . ,delim)
+                (headers   . ,headers-lst)
+                ,@(for/list ([head (syntax->list #'(fields ...))]
+                             [val (list fields ...)])
+                    (cons (syntax->datum head) val)))))
+           
+           ; Create constant access to the delimiter
+           (define (thing-delimiter v) delim)
+           
+           ; Create a constant access for the record's headers
+           (define (thing-headers v) headers-lst)
+           
+           ; Create the predicate here using whatever means
+           (define (pred-id v)
+             (and (hash? v)
+                  (eq? (hash-ref v 'type) 'id)
+                  (equal? (hash-ref v 'headers) headers-lst)))
+           
+           ; Equality check to determine if things are equal
+           (define (thing=? v1 v2)
+             (and (= (pred-id v1) (pred-id v2))))
+           
+           ; Convert a list of data to our struct
+           (define (list->thing listof-vals)
+             (apply id listof-vals))
+           
+           ; Update a list of values with their matching keys
+           ; if no key is found, throws an error
+           (define (id-update v kv-pairs)
+             (define (reducer item acc)
+               (let ([key (car item)] [val (cdr item)])
+                 (unless (hash-has-key? acc key)
+                   (error 'id-update "No key in record"))
+                 (hash-update acc key (λ (_) val))))
+             (foldl reducer v kv-pairs))
+           
+           ; Convert a thing to a string in order of the id fields
+           (define (thing->string v #:delimiter [delimit delim])
+             (string-join
+              (map (λ (key-id) (hash-ref v (syntax->datum key-id)))
+                   (syntax->list #'(fields ...)))
+              delimit))
+           
+           ; Convert a generic file port into a list of things (incomplete)
+           (define (file->things fpath #:skip-fn [sfn (λ (x) x)])
+             (call-with-input-file (build-path (string->path fpath))
+               (λ (input-f)
+                 (map
+                  (λ (row)
+                    (list->thing (string-split row delim #:trim? #f)))
+                  (sfn (port->lines input-f))))))
+           
+           ; Convert a list of things into a CSV formatted file using the delimiter
+           (define (things->csv fpath listof-v)
+             (call-with-output-file #:exists 'replace
+               fpath
+               (λ (output)
+                 (parameterize ([current-output-port output])
+                   (displayln (string-join headers-lst delim))
+                   (for-each
+                    (λ (v) (displayln (thing->string v)))
+                    listof-v)))))
+           
+           ; Accessor funcs for each field
+           ; The for/list generates a pairing of (Field * Identifier)
+           ; where Hash(Identifer => Value)
+           #,@(for/list ([h (syntax->list #'(fields ...))])
+                (with-syntax ([accessor-id (format-id #'id "~a-~a" #'id h)]
+                              [hs (syntax->datum h)])
+                  #`(define (accessor-id v)
+                      (unless (pred-id v)
+                        (error 'acc-id "~a is not a ~a struct" v 'id))
+                      (hash-ref v (quote hs)))))
+           ))]
+    [else (raise-syntax-error #f "Not a valid macro pattern" stx)]))
 
 
 ; Testing area begins
@@ -84,45 +144,26 @@
   (require (only-in rackunit test-case check-equal?)
            (only-in racket/port port->lines with-input-from-string))
 
-  (struct tester (x y z) #:transparent)
-  (define splitter (csv-split-gen (default-delimiter)))
-  (define struct-pack (struct-wrap tester))
-  (define packer (compose struct-pack splitter))
-  (define file->testers (file->struct-gen tester #:skip-fn identity))
-
-  ; Test whether string splitting works or not
-  (test-case "String splitting"
-    (define splitter (csv-split-gen ","))
-    (define other-splitter (csv-split-gen "\t"))
-    (define t1 (splitter "hello,world"))
-    (define t2 (other-splitter "hello\tworld"))
-    (check-equal? t1 '("hello" "world"))
-    (check-equal? t2 '("hello" "world")))
-
-  ; Test if our CSV parsing works or not
-  ; Pretend we have a file using with-input-from-string
-  ; and port->lines
-  (test-case "CSV parsing test 1"
-    (begin
-      (define data
-        (with-input-from-string "x,y,z\n1,2,3\n4,5,6"
-          (λ ()
-            (map (λ (line) (struct-pack (splitter line)))
-                 (cdr (port->lines (current-input-port)))))))
-      (check-equal? data (list (tester "1" "2" "3") (tester "4" "5" "6")))
-      (displayln data)))
-
-  ; Begin a baby writing test, then read it back and compare
-  (test-case "CSV writing test 1"
-    (begin
-      (define data (list (tester "1" "2" "3") (tester "4" "5" "6")))
-      (data->csv "test.csv" data record->string)
-      (for-each displayln data)
-      (check-equal? #t (file-exists? "test.csv"))
-      (define readdata (file->testers "test.csv"))
-      (delete-file "test.csv")
-      (check-equal? data readdata)))
-
+  (defrec Student ["Name" "ID"] [name id] ",")
+  (define my-students
+    (list
+     (Student "Frog"   "FROG")
+     (Student "Marle"  "NADI")
+     (Student "Crono"  "CRIT")
+     (Student "Robo"   "R66Y")
+     (Student "Magus"  "JANS")
+     (Student "Lucca"  "NERD")
+     (Student "Ayla"   "UNGA")))
+    
+  
+  (test-case "Record Write/Read #1"
+    (Students->csv "test.csv" my-students)
+    (file->Students "test.csv"))
   )
+
+
+(module+ main
+  (displayln "Not a main program!")
+  (exit))
 
 ; end main.rkt
