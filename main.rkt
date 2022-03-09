@@ -61,9 +61,9 @@ magically like `struct-out` would, so you must use
            ; The main constructor method
            (define (id fields ...)
              (make-immutable-hash
-              `((type      . id)
-                (delimiter . ,delim)
-                (headers   . ,headers-lst)
+              `((_type_      . id)
+                (_delimiter_ . ,delim)
+                (_headers_   . ,headers-lst)
                 ,@(for/list ([head (syntax->list #'(fields ...))]
                              [val (list fields ...)])
                     (cons (syntax->datum head) val)))))
@@ -77,8 +77,8 @@ magically like `struct-out` would, so you must use
            ; Create the predicate here using whatever means
            (define (pred-id v)
              (and (hash? v)
-                  (eq? (hash-ref v 'type) 'id)
-                  (equal? (hash-ref v 'headers) headers-lst)))
+                  (eq? (hash-ref v '_type_) 'id)
+                  (equal? (hash-ref v '_headers_) headers-lst)))
            
            ; Equality check to determine if things are equal
            (define (thing=? v1 v2)
@@ -92,6 +92,11 @@ magically like `struct-out` would, so you must use
            ; if no key is found, throws an error
            (define (id-update v kv-pairs)
              (define (reducer item acc)
+               (unless (pair? item)
+                 (error 'id-update "Not a pair value"))
+               (unless (symbol? (car item))
+                 (error 'id-update "Key value not a symbol"))
+
                (let ([key (car item)] [val (cdr item)])
                  (unless (hash-has-key? acc key)
                    (error 'id-update "No key in record"))
@@ -133,7 +138,7 @@ magically like `struct-out` would, so you must use
                               [hs (syntax->datum h)])
                   #`(define (accessor-id v)
                       (unless (pred-id v)
-                        (error 'acc-id "~a is not a ~a struct" v 'id))
+                        (error 'acc-id "~a is not a valid ~a CSV struct" v 'id))
                       (hash-ref v (quote hs)))))
            ))]
     [else (raise-syntax-error #f "Not a valid macro pattern" stx)]))
